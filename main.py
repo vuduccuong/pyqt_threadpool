@@ -3,8 +3,10 @@ import queue
 import sys
 import threading
 import time
-from time import sleep
+import zipfile
 
+import winshell
+from win32com.client import Dispatch
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QIntValidator
 from PyQt6.QtWidgets import (
@@ -18,40 +20,50 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QMessageBox,
+    QFileDialog,
 )
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+
+chrome_exe_path = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+chrome_profile_path = os.path.join(os.path.expanduser('~'), "AppData\\Local\\Google\Chrome\\User Data")
+lock = threading.Lock()
 
 
 class CreateProfileThread(QThread):
     finished = pyqtSignal()
 
-    def __init__(self, num_profile):
+    def __init__(self, profile_name, rar_file_path):
         super().__init__()
-        self.num_profile = num_profile
+        self.profile_name = profile_name
+        self.rar_file_path = os.path.join(rar_file_path)
 
     def run(self):
-        # tạo driver
-        options = webdriver.ChromeOptions()
-        options.add_argument("--disable-extensions")
-        options.add_argument("--headless")
-        options.add_argument("--disable-gpu")
-        profile_dir = os.getcwd() + f"/profiles/profile_{self.num_profile}"
-        if not os.path.exists(profile_dir):
-            os.makedirs(profile_dir)
-        try:
-            options.add_argument(f"--user-data-dir={profile_dir}")
+        with lock:
+            try:
+                # Extract my profile to new profile
+                try:
+                    with zipfile.ZipFile(self.rar_file_path, 'r') as zf:
+                        zf.extractall(os.path.join(chrome_profile_path, self.profile_name))
+                    print("Giải nén xong")
+                except Exception as e:
+                    print(e)
+                    return
+                # Create Shotcut
+                desktop = winshell.desktop()
+                path = desktop + f"\\{self.profile_name}-Chrome.lnk"
+                target = chrome_exe_path
+                wDir = "C:\\Program Files\\Google\\Chrome\\Application\\"
+                icon = chrome_exe_path
+                shell = Dispatch('WScript.Shell')
+                shortcut = shell.CreateShortCut(path)
+                shortcut.Targetpath = target
+                shortcut.Arguments = f"--profile-directory=\"{self.profile_name}\""
+                shortcut.WorkingDirectory = wDir
+                shortcut.IconLocation = icon
 
-            webdriver.Chrome(
-                service=Service(ChromeDriverManager().install()),
-                options=options,
-            )
-            sleep(0.5)
-        except Exception as e:
-            print(e)
-
-        self.finished.emit()
+                shortcut.save()
+            except Exception as e:
+                print(e)
+            self.finished.emit()
 
 
 class ThreadPool:
@@ -77,6 +89,18 @@ class ThreadPool:
         ...
 
 
+def create_if_not_exist(max_index) -> int:
+    while True:
+        profile_name = f"Profile {max_index}"
+        profile_path = os.path.join(chrome_profile_path, profile_name)
+        if not os.path.exists(profile_path):
+            os.makedirs(profile_path)
+            break
+
+        max_index += 1
+    return max_index
+
+
 class MyWidget(QWidget):
     def __init__(self):
         super().__init__()
@@ -85,6 +109,22 @@ class MyWidget(QWidget):
 
     def init_ui(self):
         vbox = QVBoxLayout()
+
+        h_box_dialog = QHBoxLayout()
+        self.setWindowTitle('Chọn profile của bạn')
+        self.setGeometry(300, 300, 300, 100)
+
+        self.rar_file_path = QLineEdit(self)
+        self.rar_file_path.setGeometry(10, 10, 200, 30)
+        self.rar_file_path.setReadOnly(True)
+
+        self.button = QPushButton('Select File', self)
+        self.button.setGeometry(220, 10, 70, 30)
+        self.button.clicked.connect(self.show_file_dialog)
+
+        h_box_dialog.addWidget(self.rar_file_path)
+        h_box_dialog.addWidget(self.button)
+        vbox.addLayout(h_box_dialog)
 
         hbox1 = QHBoxLayout()
         label = QLabel("Browser")
@@ -133,26 +173,39 @@ class MyWidget(QWidget):
     def run_task(self):
         start_time = time.time()
         browser = self.combo.currentData()
-        option = "Tạo mới" if self.radio1.isChecked() else "Thêm"
         num_profiles = int(self.input.text())
         num_threads = int(self.comboThread.currentText())
+        rar_file_path = self.rar_file_path.text()
 
-        if browser == 1 and self.radio1.isChecked():
+        if browser == 1 and self.radio1.isChecked() and rar_file_path:
             self.button.setDisabled(True)
             thread_pool = ThreadPool(num_threads=num_threads)
             # tạo thread để tạo các profile
-            for profile in range(num_profiles):
-                thread_pool.add_task(CreateProfileThread(profile + 1))
+            profile_id = create_if_not_exist(max_index=0)
+            for index in range(num_profiles):
+                profile_name = f"Profile {profile_id}"
+                thread_pool.add_task(CreateProfileThread(profile_name, rar_file_path))
+                profile_id += 1
+                if index < num_profiles - 1:
+                    profile_id = create_if_not_exist(max_index=profile_id)
             thread_pool.task_queue.join()
             if thread_pool.task_queue.empty():
                 time_excute = time.time() - start_time
                 self.button.setDisabled(False)
                 self.msgBox.setText(f"Hoàn thành trong: {time_excute} giây")
                 self.msgBox.exec()
-
+        elif not rar_file_path:
+            self.msgBox.setText("Chọn file Profile rar!")
+            self.msgBox.exec()
         else:
             self.msgBox.setText("Chức năng chưa thực hiện!")
             self.msgBox.exec()
+
+    def show_file_dialog(self):
+        file_dialog = QFileDialog()
+        file_path = file_dialog.getOpenFileName(self, 'Select File', directory=os.getcwd())[0]
+        if file_path:
+            self.rar_file_path.setText(file_path)
 
 
 if __name__ == "__main__":

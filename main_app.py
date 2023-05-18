@@ -15,9 +15,9 @@ from PyQt6.QtWidgets import (
     QFileDialog,
 )
 
-from browser_factory import BROWSER
-from thread_helpers import ThreadPool
-from thread_helpers.create_profile import CreateProfileThread
+from browser_factory import BROWSER, FIREFOX
+from create_profile import ThreadPool
+from create_profile import CreateProfileThread
 from utils import create_if_not_exist
 
 
@@ -107,16 +107,21 @@ class MyWidget(QWidget):
         if self.radio1.isChecked():
             self.button.setDisabled(True)
             thread_pool = ThreadPool(num_threads=num_threads)
-            # tạo thread để tạo các profile
-            profile_id = create_if_not_exist(browser_type=browser, max_index=0)
+            profile_id, _path = create_if_not_exist(browser_type=browser, max_index=0)
             for index in range(num_profiles):
-                profile_name = f"Profile {profile_id}"
+                profile_name = (
+                    f"Profile_{profile_id}"
+                    if browser == FIREFOX
+                    else f"Profile {profile_id}"
+                )
                 thread_pool.add_task(
-                    CreateProfileThread(profile_name, zip_file_path, browser)
+                    CreateProfileThread(
+                        profile_name, zip_file_path, browser, path=_path
+                    )
                 )
                 profile_id += 1
                 if index < num_profiles - 1:
-                    profile_id = create_if_not_exist(
+                    profile_id, _path = create_if_not_exist(
                         browser_type=browser, max_index=profile_id
                     )
             thread_pool.task_queue.join()
